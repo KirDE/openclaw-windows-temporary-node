@@ -1,204 +1,148 @@
-# OpenClaw Temporary Windows Node
+# Temporary PowerShell Support
 
-Run a temporary OpenClaw node on a Windows PC for troubleshooting and repair.
-The bootstrap uses a portable Node.js runtime, keeps all OpenClaw state under a
-random directory in `%TEMP%`, stays in the foreground, and removes its local
-runtime and device credentials when it exits.
+Give a trusted operator a short-lived, approval-gated PowerShell session on a
+Windows computer without installing OpenClaw, Node.js, a service, or a startup
+entry on that computer.
 
-No administrator privileges, permanent Node.js installation, OpenClaw service,
-or inbound port forwarding are required.
+The Windows user runs one public PowerShell command, enters a single-use code,
+and keeps the console open. Every proposed command is displayed in full and
+runs only after the user types `YES`. Closing the console ends the client;
+server-side expiry and explicit revocation end the session independently.
 
 > [!WARNING]
-> A connected OpenClaw node can execute commands on the Windows machine after
-> the Gateway operator approves its command surface and individual execution
-> requests. Use it only with a Gateway and operator you trust. Stopping the node
-> does **not** revoke it at the Gateway; follow the revocation step below.
+> This tool provides remote command execution. Use it only with a trusted
+> operator and only on computers whose owner has authorized the session. Never
+> share a join code publicly.
 
-## What the script does
+## What is—and is not—installed on Windows
 
-1. Creates a current-user-only working directory under `%TEMP%`.
-2. Downloads the pinned official Node.js ZIP and verifies its SHA-256 checksum.
-3. Installs a pinned OpenClaw package into that temporary directory.
-4. Optionally opens an outbound SSH local-forward tunnel to the Gateway host.
-5. Prompts for a short-lived OpenClaw join target without echoing it.
-6. Runs `openclaw connect` in the foreground with an isolated
-   `OPENCLAW_STATE_DIR`.
-7. Stops the tunnel and deletes the temporary runtime and credentials on exit.
+Nothing is installed. The client uses Windows PowerShell 5.1 components already
+present on Windows 10/11: `Invoke-RestMethod`, one in-memory foreground script,
+and temporary `Start-Job` child processes for bounded command execution.
 
-The defaults are Node.js `v24.20.0` and OpenClaw `2026.9.3`. Both can be
-overridden with script parameters.
+It does **not** install or download Node.js, OpenClaw, WinRM, OpenSSH, a Windows
+service, a scheduled task, a driver, or a persistent credential. The client
+keeps its session token only in process memory.
 
-## Requirements
+Some process must still run on the target computer: an untouched computer
+cannot be controlled remotely. Here that process is the visible foreground
+PowerShell window started by the user.
 
-- Windows 10/11 with Windows PowerShell 5.1 or PowerShell 7.
-- Outbound HTTPS access to `nodejs.org` and `registry.npmjs.org`.
-- A trusted OpenClaw Gateway operator.
-- For tunnel mode: the Windows OpenSSH client, key-based SSH authentication,
-  and a previously verified host key in `known_hosts`.
+## Architecture
 
-## Download and inspect
+1. The Gateway operator creates a session locally with `operator.mjs`.
+2. The relay returns a random single-use join code valid for a bounded time.
+3. The Windows user runs the public client and enters that code at a hidden prompt.
+4. The relay consumes the code and gives the client a random bearer token.
+5. The operator queues PowerShell through a protected local command file.
+6. Windows displays the complete command and waits for `YES`.
+7. The command runs in a bounded PowerShell job and returns output to the relay.
+8. Closing, expiry, or operator revocation invalidates the bearer token.
 
-Download the script rather than piping remote code directly into PowerShell:
+The relay is an OpenClaw Gateway plugin. It binds no additional port and uses
+the Gateway's existing HTTPS endpoint. Client routes use plugin-managed random
+tokens; operator actions are local filesystem operations and are not exposed by
+HTTP.
 
-```powershell
-Invoke-WebRequest `
-  https://raw.githubusercontent.com/KirDE/openclaw-windows-temporary-node/main/OpenClaw-TemporaryNode.ps1 `
-  -OutFile .\OpenClaw-TemporaryNode.ps1
+## Windows: connect with one command
 
-Get-Content .\OpenClaw-TemporaryNode.ps1
-```
-
-## Option A: direct WSS/HTTPS connection
-
-On the **Gateway**, create a short-lived join URL that points to a reachable,
-TLS-protected Gateway endpoint:
-
-```bash
-openclaw devices join-code --url wss://gateway.example.com
-```
-
-Then run on **Windows**:
+Run in Windows PowerShell 5.1 or PowerShell 7:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File .\OpenClaw-TemporaryNode.ps1
+Invoke-Expression (Invoke-RestMethod 'https://clawdbie.kir-it.de:18790/temporary-powershell/client.ps1')
 ```
 
-Create the join URL only when the script asks for it. It is single-use and
-expires after about ten minutes. Paste it into the hidden prompt.
+The script asks for the single-use code with hidden input. Run PowerShell as
+Administrator only when the requested repair actually needs elevation. For
+maximum assurance, download and inspect `Connect-TemporaryPowerShell.ps1`
+before running it instead of using the one-line form.
 
-## Option B: connection through an SSH tunnel
+## Gateway installation
 
-This is the recommended option when the Gateway listens only on loopback. It
-does not expose the Gateway port to the internet.
-
-First, verify the SSH host key and key-based login from the Windows PC:
-
-```powershell
-ssh support@gateway.example.com exit
-```
-
-Confirm the displayed fingerprint with the Gateway administrator before
-accepting it. The bootstrap deliberately uses `StrictHostKeyChecking=yes` and
-will not silently trust a new host key.
-
-Start the bootstrap on **Windows**:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File .\OpenClaw-TemporaryNode.ps1 `
-  -SshTarget support@gateway.example.com `
-  -SshIdentityFile "$env:USERPROFILE\.ssh\id_ed25519"
-```
-
-Once it reports that the tunnel is ready, create a loopback join URL on the
-**Gateway**:
+From this repository on the OpenClaw host:
 
 ```bash
-openclaw devices join-code --url ws://127.0.0.1:18789
+openclaw plugins install . --force --accept-capabilities
+openclaw plugins enable temporary-powershell-relay
+openclaw gateway restart
 ```
 
-Paste the resulting `http://127.0.0.1:18789/j/...` URL into the hidden Windows
-prompt. The HTTP hop exists only over loopback at both ends and is carried
-inside the authenticated SSH tunnel.
+The plugin stores ephemeral state below
+`$OPENCLAW_STATE_DIR/powershell-relay` (normally
+`~/.openclaw/powershell-relay`) with owner-only permissions.
 
-If local port `18789` is occupied, choose another local port on Windows:
+## Operator workflow
 
-```powershell
-.\OpenClaw-TemporaryNode.ps1 `
-  -SshTarget support@gateway.example.com `
-  -LocalPort 28789
-```
-
-Generate the join URL with the matching advertised loopback port:
+Create a 30-minute session:
 
 ```bash
-openclaw devices join-code --url ws://127.0.0.1:28789
+node operator.mjs create --ttl-minutes 30 --timeout-seconds 120
 ```
 
-The SSH forward still targets Gateway port `18789` unless `-GatewayPort` is
-also changed.
-
-## Approve the temporary node
-
-OpenClaw uses separate approval steps for the device identity and its declared
-node command surface. On the Gateway:
+Deliver the returned join code privately to the Windows user. Do not paste it
+into a group chat or ticket. Check whether the client connected:
 
 ```bash
-openclaw devices list
-openclaw devices approve <device-request-id>
+node operator.mjs status --session <session-id>
 ```
 
-If the Windows command exits while waiting for approval, run the bootstrap
-again with a fresh join URL. After the device connects, approve the node command
-surface:
+Write the proposed PowerShell into an owner-only local file, then queue it:
 
 ```bash
-openclaw nodes pending
-openclaw nodes approve <node-request-id>
-openclaw nodes status
+node operator.mjs exec \
+  --session <session-id> \
+  --command-file /secure/local/diagnostic.ps1 \
+  --timeout-seconds 120 \
+  --wait-seconds 180
 ```
 
-Command execution remains subject to the node's local exec-approval policy.
-Prefer `ask: "on-miss"` or a narrow allowlist instead of unrestricted access.
+Command text is deliberately not accepted as a CLI argument, preventing it
+from leaking into process listings and shell history. End access even if the
+Windows console is still open:
 
-## End and revoke access
-
-1. Press `Ctrl+C` in the Windows console and wait for the cleanup message.
-2. On the Gateway, identify and remove the temporary node:
-
-   ```bash
-   openclaw nodes status
-   openclaw nodes remove --node <id-or-exact-name>
-   ```
-
-3. Confirm it no longer appears as paired/connected:
-
-   ```bash
-   openclaw nodes status
-   openclaw devices list
-   ```
-
-Closing the console abruptly can prevent local cleanup. If that happens,
-delete only the `openclaw-temporary-node-*` directory created under the current
-user's `%TEMP%` directory, then revoke the node at the Gateway.
-
-## Parameters
-
-```text
--DisplayName        Node name shown at the Gateway
--SshTarget          Optional SSH destination, for example user@gateway.example
--SshIdentityFile    Optional path to an existing SSH private key
--LocalPort          Local tunnel port (default: 18789)
--GatewayPort        Gateway loopback port on the SSH host (default: 18789)
--NodeVersion        Pinned portable Node.js version (default: v24.20.0)
--OpenClawVersion    Pinned OpenClaw npm version (default: 2026.9.3)
+```bash
+node operator.mjs revoke --session <session-id>
 ```
 
-## Security notes
+## Security properties
 
-- Do not paste a Gateway token or password into the script. Use the short-lived
-  join URL/setup code generated by `openclaw devices join-code`.
-- Do not publish join URLs, setup codes, SSH private keys, or node state.
-- Do not expose the Gateway listener with router port forwarding. Use WSS,
-  Tailscale, or the outbound SSH tunnel described above.
-- The script uses a private target file so the join credential is not placed in
-  the OpenClaw child process command line.
-- The SSH mode refuses unknown host keys and password authentication. Verify
-  the host fingerprint separately and use a dedicated, restricted SSH account
-  where possible.
-- Temporary local cleanup and Gateway-side revocation are both required.
+- Join codes carry about 96 bits of randomness, are stored only as SHA-256
+  hashes, are single-use, and expire.
+- Client bearer tokens are random, stored only as SHA-256 hashes, and revoked
+  on close, expiry, or operator action.
+- Operator command submission is not available over HTTP.
+- Every command requires visible target-user approval by default.
+- Commands have a 5–900 second timeout and run in separate PowerShell jobs.
+- Commands are limited to 256 KiB and returned output to 1 MiB.
+- HTTP request bodies are limited to 2 MiB and responses disable caching.
+- The client never disables TLS certificate validation.
+- No secrets, join codes, or bearer tokens belong in the repository.
 
-## Official alternatives
+This is not a substitute for a managed endpoint agent. It intentionally omits
+screen control, background persistence, unattended execution, dedicated file
+transfer, and privilege escalation.
 
-OpenClaw also publishes a signed native Windows Hub companion app. Use Windows
-Hub for ongoing access, tray status, screen/camera capabilities, and managed
-connections. This repository is intentionally limited to temporary,
-foreground, command-line node access.
+## Verification
 
-- [OpenClaw Windows documentation](https://docs.openclaw.ai/platforms/windows)
-- [OpenClaw node documentation](https://docs.openclaw.ai/cli/node)
-- [OpenClaw connect documentation](https://docs.openclaw.ai/cli/connect)
+```bash
+npm test
+```
+
+GitHub Actions parses the client with Windows PowerShell 5.1, runs
+PSScriptAnalyzer, and executes the Node.js relay tests. These checks do not
+replace a real end-to-end Windows session test.
+
+## Removal
+
+Revoke every active session, then disable and uninstall the plugin:
+
+```bash
+openclaw plugins disable temporary-powershell-relay
+openclaw plugins uninstall temporary-powershell-relay
+openclaw gateway restart
+```
+
+The Windows side has no installed component to remove.
 
 ## License
 
