@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
-    [Parameter()]
+    [Parameter(Mandatory = $true)]
     [ValidatePattern('^https://')]
-    [string]$RelayUrl = 'https://clawdbie.kir-it.de:18790/temporary-powershell'
+    [string]$RelayUrl
 )
 
 Set-StrictMode -Version Latest

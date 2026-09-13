@@ -39,7 +39,10 @@ test("serves the PowerShell client without caching", async (t) => {
   await handler(request("GET", "/temporary-powershell/client.ps1"), res);
   assert.equal(res.statusCode, 200);
   assert.equal(res.headers["cache-control"], "no-store");
-  assert.match(Buffer.concat(res.chunks).toString("utf8"), /Temporary support session connected/u);
+  const client = Buffer.concat(res.chunks).toString("utf8");
+  assert.match(client, /Temporary support session connected/u);
+  assert.match(client, /Parameter\(Mandatory = \$true\)/u);
+  assert.doesNotMatch(client, /RelayUrl\s*=/u);
 });
 
 test("enrollment, polling, result and close require the client token", async (t) => {

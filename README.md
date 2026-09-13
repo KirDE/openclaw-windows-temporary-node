@@ -49,8 +49,13 @@ HTTP.
 Run in Windows PowerShell 5.1 or PowerShell 7:
 
 ```powershell
-Invoke-Expression (Invoke-RestMethod 'https://clawdbie.kir-it.de:18790/temporary-powershell/client.ps1')
+$u = 'https://gateway.example.com/temporary-powershell'; & ([ScriptBlock]::Create((Invoke-RestMethod "$u/client.ps1"))) -RelayUrl $u
 ```
+
+Replace `https://gateway.example.com` with the HTTPS URL through which the
+Windows computer can reach this OpenClaw Gateway. The relay URL is deliberately
+not compiled into the client, so the same plugin package works on every
+OpenClaw installation.
 
 The script asks for the single-use code with hidden input. Run PowerShell as
 Administrator only when the requested repair actually needs elevation. For
@@ -70,6 +75,9 @@ openclaw gateway restart
 The plugin stores ephemeral state below
 `$OPENCLAW_STATE_DIR/powershell-relay` (normally
 `~/.openclaw/powershell-relay`) with owner-only permissions.
+
+For a complete installation, reverse-proxy, agent-operation, verification, and
+removal procedure, see [`INSTALL.md`](INSTALL.md).
 
 ## Operator workflow
 
