@@ -1,4 +1,5 @@
 *.log
 *.zip
+.relay-state/
 .idea/
 .vscode/

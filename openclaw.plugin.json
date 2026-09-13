@@ -1,0 +1,14 @@
+{
+  "id": "temporary-powershell-relay",
+  "name": "Temporary PowerShell Relay",
+  "description": "One-time, approval-gated PowerShell support sessions without installing OpenClaw on Windows.",
+  "version": "0.2.0",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
