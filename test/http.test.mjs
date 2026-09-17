@@ -42,7 +42,31 @@ test("serves the PowerShell client without caching", async (t) => {
   const client = Buffer.concat(res.chunks).toString("utf8");
   assert.match(client, /Temporary support session connected/u);
   assert.match(client, /Parameter\(Mandatory = \$true\)/u);
+  assert.match(client, /PSObject\.Properties\['id'\]/u);
+  assert.doesNotMatch(client, /-not \$command\.id/u);
   assert.doesNotMatch(client, /RelayUrl\s*=/u);
+});
+
+test("returns an empty successful response while no command is queued", async (t) => {
+  const { store, handler } = await fixture(t);
+  const created = await store.createSession();
+  const enrollRes = new Response();
+  await handler(request("POST", "/temporary-powershell/v1/enroll", {
+    joinCode: created.joinCode,
+    client: { computerName: "PC" },
+  }), enrollRes);
+  const enrollment = enrollRes.json();
+
+  const pollRes = new Response();
+  await handler(request(
+    "GET",
+    `/temporary-powershell/v1/commands?session=${enrollment.sessionId}`,
+    undefined,
+    { authorization: `Bearer ${enrollment.clientToken}` },
+  ), pollRes);
+
+  assert.equal(pollRes.statusCode, 204);
+  assert.equal(Buffer.concat(pollRes.chunks).length, 0);
 });
 
 test("enrollment, polling, result and close require the client token", async (t) => {
