@@ -1,13 +1,16 @@
 # Temporary PowerShell Support
 
-Give a trusted operator a short-lived, approval-gated PowerShell session on a
-Windows computer without installing OpenClaw, Node.js, a service, or a startup
-entry on that computer.
+Give a trusted operator a PowerShell session on a Windows computer without
+installing OpenClaw, Node.js, a service, or a startup entry on that computer.
+The safe default is short-lived and approval-gated. An explicitly selected
+trusted mode stays active until the Windows user closes it and runs commands
+without per-command confirmation.
 
 The Windows user runs one public PowerShell command, enters a single-use code,
-and keeps the console open. Every proposed command is displayed in full and
-runs only after the user types `YES`. Closing the console ends the client;
-server-side expiry and explicit revocation end the session independently.
+and keeps the console open. In the default mode every proposed command is
+displayed in full and runs only after the user types `YES`. Closing the console
+ends either mode; bounded sessions also have server-side expiry and every
+session can still be explicitly revoked by the operator.
 
 > [!WARNING]
 > This tool provides remote command execution. Use it only with a trusted
@@ -35,9 +38,11 @@ PowerShell window started by the user.
 3. The Windows user runs the public client and enters that code at a hidden prompt.
 4. The relay consumes the code and gives the client a random bearer token.
 5. The operator queues PowerShell through a protected local command file.
-6. Windows displays the complete command and waits for `YES`.
+6. Windows displays the complete command and either waits for `YES` or runs it
+   immediately when trusted mode was explicitly selected at session creation.
 7. The command runs in a bounded PowerShell job and returns output to the relay.
-8. Closing, expiry, or operator revocation invalidates the bearer token.
+8. Closing or operator revocation invalidates the bearer token; bounded
+   sessions additionally expire automatically.
 
 The relay is an OpenClaw Gateway plugin. It binds no additional port and uses
 the Gateway's existing HTTPS endpoint. Client routes use plugin-managed random
@@ -90,6 +95,18 @@ Create a 30-minute session:
 node operator.mjs create --ttl-minutes 30 --timeout-seconds 120
 ```
 
+Create a trusted session that has no runtime expiry and does not ask for
+per-command confirmation:
+
+```bash
+node operator.mjs create --no-expiry --no-confirmation --timeout-seconds 900
+```
+
+The single-use join code still expires after 30 minutes if it is not consumed.
+After enrollment, the trusted session remains active until the Windows user
+presses `Ctrl+C` or closes PowerShell. `revoke` remains available for emergency
+operator shutdown, but normal task completion does not require it.
+
 Deliver the returned join code privately to the Windows user. Do not paste it
 into a group chat or ticket. Check whether the client connected:
 
@@ -120,9 +137,10 @@ node operator.mjs revoke --session <session-id>
 - Join codes carry about 96 bits of randomness, are stored only as SHA-256
   hashes, are single-use, and expire.
 - Client bearer tokens are random, stored only as SHA-256 hashes, and revoked
-  on close, expiry, or operator action.
+  on close or operator action; bounded sessions also revoke on expiry.
 - Operator command submission is not available over HTTP.
-- Every command requires visible target-user approval by default.
+- Every command requires visible target-user approval by default. Trusted mode
+  disables this only when `--no-confirmation` was explicitly selected.
 - Commands have a 5–900 second timeout and run in separate PowerShell jobs.
 - Commands are limited to 256 KiB and returned output to 1 MiB.
 - HTTP request bodies are limited to 2 MiB and responses disable caching.

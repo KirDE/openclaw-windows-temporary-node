@@ -42,6 +42,33 @@ test("revocation immediately blocks polling and results", async (t) => {
   await assert.rejects(() => store.nextCommand(session.id, clientToken), /ENOENT/u);
 });
 
+test("trusted sessions remain active until the client closes them", async (t) => {
+  const store = await fixture(t);
+  const { session, joinCode } = await store.createSession({ ttlMs: null, requiresApproval: false });
+  assert.equal(session.expiresAt, null);
+  assert.equal(session.requiresApproval, false);
+  assert.ok(session.joinExpiresAt > session.createdAt);
+
+  const { clientToken } = await store.enroll(joinCode);
+  const enrolled = await store.readSession(session.id);
+  enrolled.joinExpiresAt = 0;
+  await store.writeSession(enrolled);
+  await store.pruneExpired();
+  assert.equal((await store.authenticate(session.id, clientToken)).expiresAt, null);
+
+  await store.close(session.id, clientToken);
+  await assert.rejects(() => store.readSession(session.id), /ENOENT/u);
+});
+
+test("unused trusted sessions are removed when the join code expires", async (t) => {
+  const store = await fixture(t);
+  const { session } = await store.createSession({ ttlMs: null });
+  session.joinExpiresAt = 0;
+  await store.writeSession(session);
+  await store.pruneExpired();
+  await assert.rejects(() => store.readSession(session.id), /ENOENT/u);
+});
+
 test("scripts and result payloads are bounded", async (t) => {
   const store = await fixture(t);
   const { session, joinCode } = await store.createSession();

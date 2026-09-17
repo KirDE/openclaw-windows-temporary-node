@@ -4,7 +4,7 @@ import { RelayStore } from "./server/state.mjs";
 
 function usage() {
   console.error(`Usage:
-  node operator.mjs create [--ttl-minutes 30] [--timeout-seconds 120]
+  node operator.mjs create [--ttl-minutes 30 | --no-expiry] [--no-confirmation] [--timeout-seconds 120]
   node operator.mjs status --session <id>
   node operator.mjs exec --session <id> --command-file <path> [--timeout-seconds 120] [--wait-seconds 180]
   node operator.mjs revoke --session <id>`);
@@ -13,11 +13,17 @@ function usage() {
 function parseArgs(argv) {
   const [action, ...rest] = argv;
   const options = {};
-  for (let index = 0; index < rest.length; index += 2) {
+  for (let index = 0; index < rest.length;) {
     const key = rest[index];
+    if (!key?.startsWith("--")) throw new Error("Invalid arguments");
     const value = rest[index + 1];
-    if (!key?.startsWith("--") || value === undefined) throw new Error("Invalid arguments");
-    options[key.slice(2)] = value;
+    if (value === undefined || value.startsWith("--")) {
+      options[key.slice(2)] = true;
+      index += 1;
+    } else {
+      options[key.slice(2)] = value;
+      index += 2;
+    }
   }
   return { action, options };
 }
@@ -37,17 +43,31 @@ const store = new RelayStore();
 try {
   const { action, options } = parseArgs(process.argv.slice(2));
   if (action === "create") {
-    const ttlMinutes = integer(options["ttl-minutes"], 30);
+    if (options["no-expiry"] && options["ttl-minutes"] !== undefined) {
+      throw new Error("--no-expiry and --ttl-minutes cannot be combined");
+    }
+    const ttlMinutes = options["no-expiry"] ? null : integer(options["ttl-minutes"], 30);
     const commandTimeoutSeconds = integer(options["timeout-seconds"], 120);
-    const { session, joinCode } = await store.createSession({ ttlMs: ttlMinutes * 60_000, commandTimeoutSeconds });
-    console.log(JSON.stringify({ sessionId: session.id, joinCode, expiresAt: new Date(session.expiresAt).toISOString() }));
+    const { session, joinCode } = await store.createSession({
+      ttlMs: ttlMinutes === null ? null : ttlMinutes * 60_000,
+      commandTimeoutSeconds,
+      requiresApproval: !options["no-confirmation"],
+    });
+    console.log(JSON.stringify({
+      sessionId: session.id,
+      joinCode,
+      expiresAt: session.expiresAt === null ? null : new Date(session.expiresAt).toISOString(),
+      joinCodeExpiresAt: new Date(session.joinExpiresAt).toISOString(),
+      requiresApproval: session.requiresApproval,
+    }));
   } else if (action === "status") {
     if (!options.session) throw new Error("--session is required");
     const session = await store.readSession(options.session);
     console.log(JSON.stringify({
       sessionId: session.id,
       createdAt: new Date(session.createdAt).toISOString(),
-      expiresAt: new Date(session.expiresAt).toISOString(),
+      expiresAt: session.expiresAt === null ? null : new Date(session.expiresAt).toISOString(),
+      requiresApproval: session.requiresApproval !== false,
       enrolled: Boolean(session.enrolledAt),
       revoked: Boolean(session.revokedAt),
       closed: Boolean(session.closedAt),

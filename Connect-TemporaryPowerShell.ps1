@@ -79,12 +79,19 @@ finally {
 $sessionId = [string]$enrollment.sessionId
 $clientToken = [string]$enrollment.clientToken
 $pollSeconds = [Math]::Max(1, [int]$enrollment.pollSeconds)
+$approvalProperty = $enrollment.PSObject.Properties['requiresApproval']
+$requiresApproval = if ($null -eq $approvalProperty) { $true } else { [bool]$approvalProperty.Value }
 $headers = @{ Authorization = "Bearer $clientToken" }
 $resultCache = @{}
 
 Write-Host "`nTemporary support session connected." -ForegroundColor Green
 Write-Host "Computer: $($env:COMPUTERNAME) | User: $($env:USERNAME) | Administrator: $isAdmin"
-Write-Host 'Every command will be displayed and requires typing YES. Press Ctrl+C to end access.' -ForegroundColor Yellow
+if ($requiresApproval) {
+    Write-Host 'Every command will be displayed and requires typing YES. Press Ctrl+C to end access.' -ForegroundColor Yellow
+}
+else {
+    Write-Host 'Trusted session: commands run without confirmation. Press Ctrl+C to end access.' -ForegroundColor Yellow
+}
 
 try {
     while ($true) {
@@ -123,7 +130,7 @@ try {
         Write-Host "`n----- Proposed PowerShell command -----" -ForegroundColor Cyan
         Write-Host ([string]$command.script)
         Write-Host "----- Timeout: $([int]$command.timeoutSeconds) seconds -----" -ForegroundColor Cyan
-        $approval = Read-Host 'Type YES to execute this command'
+        $approval = if ($requiresApproval) { Read-Host 'Type YES to execute this command' } else { 'YES' }
         if ($approval -cne 'YES') {
             $result = @{ commandId = $commandId; status = 'denied'; output = 'The Windows user denied this command.' }
         }

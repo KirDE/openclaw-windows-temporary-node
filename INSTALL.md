@@ -2,8 +2,9 @@
 
 This procedure installs the temporary PowerShell relay on any compatible
 OpenClaw Gateway. The Windows computer installs nothing: its owner runs one
-foreground PowerShell command and approves every proposed command by typing
-`YES`.
+foreground PowerShell command. Sessions are approval-gated and bounded by
+default; an explicit trusted mode can run without confirmation until the user
+closes it.
 
 ## Requirements
 
@@ -53,15 +54,19 @@ curl --fail --show-error --silent \
 Use the following as agent or workspace instructions:
 
 > For authorized temporary Windows support, use the
-> `temporary-powershell-relay` plugin. Create short-lived sessions with
-> `operator.mjs`; deliver join codes only to the requesting user in private;
+> `temporary-powershell-relay` plugin. Create bounded, approval-gated sessions
+> by default; use `--no-expiry --no-confirmation` only when the computer owner
+> explicitly authorizes trusted access. Deliver join codes only to the
+> requesting user in private;
 > verify the enrolled computer, user, PowerShell version, and administrator
 > status before sending commands. Put command text in an owner-only temporary
 > file, never in CLI arguments. Send commands only through `operator.mjs exec`.
-> The Windows user must see and approve every command. Revoke the session in a
-> `finally`-style cleanup even after errors or timeouts, and verify that status
-> no longer succeeds. Never claim screen control, unattended execution,
-> privilege escalation, or file transfer.
+> In bounded mode the Windows user must see and approve every command and the
+> operator revokes after the task. In trusted mode, do not revoke merely because
+> one task completed; the normal shutdown path is the user pressing `Ctrl+C` or
+> closing PowerShell. Keep explicit revoke available for emergency shutdown.
+> Never claim screen control, background persistence, privilege escalation, or
+> file transfer.
 
 The agent needs `exec` permission for `node`, access to this checkout, and
 read/write access to the relay state directory. Do not expose that directory,
@@ -78,6 +83,18 @@ node operator.mjs create --ttl-minutes 30 --timeout-seconds 120
 The output contains a session ID and a single-use join code. Keep the session
 ID local. Send the join code only through a private channel to the authorized
 Windows user; never post it in a group, issue, ticket, or log.
+
+For an explicitly authorized trusted session that has no runtime expiry and
+runs commands without `YES`, use:
+
+```bash
+node operator.mjs create --no-expiry --no-confirmation --timeout-seconds 900
+```
+
+Its join code still expires after 30 minutes if unused. Once enrolled, the
+session remains active until the Windows user presses `Ctrl+C` or closes the
+PowerShell window. Explicit operator revocation remains available for emergency
+shutdown.
 
 ## 4. Connect the Windows computer
 
@@ -119,21 +136,26 @@ node operator.mjs exec \
   --wait-seconds 180
 ```
 
-The Windows user sees the complete command and must type exactly `YES` before
-it runs. Remove the local command file after the result is captured.
+In bounded mode the Windows user sees the complete command and must type
+exactly `YES` before it runs. In trusted mode the command is still displayed
+but starts immediately. Remove the local command file after the result is
+captured.
 
 ## 6. Revoke and verify cleanup
 
-Always revoke server-side access, including after a denied command, timeout,
-network failure, or interrupted agent turn:
+For bounded sessions, revoke server-side access after the task, including after
+a denied command, timeout, network failure, or interrupted agent turn:
 
 ```bash
 node operator.mjs revoke --session SESSION_ID
 ```
 
 After revocation, `status` must fail because the session directory has been
-destroyed. Closing the Windows window also attempts immediate closure; expiry
-remains the final safety boundary if the network disappears.
+destroyed. For an explicitly authorized trusted session, leave access active
+after task completion and let the user close it; then verify that `status`
+fails. Trusted mode intentionally has no expiry fallback after enrollment, so
+use explicit revoke if the client disappears without completing its close
+request.
 
 ## Removal
 
