@@ -62,7 +62,13 @@ export function createRelayHandler({ store = new RelayStore(), routeBase = "/tem
       if (req.method === "POST" && url.pathname === `${base}/v1/enroll`) {
         const body = await readJson(req);
         const { session, clientToken } = await store.enroll(body.joinCode, body.client);
-        json(res, 200, { sessionId: session.id, clientToken, expiresAt: session.expiresAt, pollSeconds: 2 });
+        json(res, 200, {
+          sessionId: session.id,
+          clientToken,
+          expiresAt: session.expiresAt,
+          requiresApproval: session.requiresApproval !== false,
+          pollSeconds: 2,
+        });
         return true;
       }
       if (req.method === "GET" && url.pathname === `${base}/v1/commands`) {

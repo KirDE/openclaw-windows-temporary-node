@@ -43,8 +43,23 @@ test("serves the PowerShell client without caching", async (t) => {
   assert.match(client, /Temporary support session connected/u);
   assert.match(client, /Parameter\(Mandatory = \$true\)/u);
   assert.match(client, /PSObject\.Properties\['id'\]/u);
+  assert.match(client, /requiresApproval/u);
+  assert.match(client, /Trusted session: commands run without confirmation/u);
   assert.doesNotMatch(client, /-not \$command\.id/u);
   assert.doesNotMatch(client, /RelayUrl\s*=/u);
+});
+
+test("trusted enrollment advertises no expiry and no confirmation", async (t) => {
+  const { store, handler } = await fixture(t);
+  const created = await store.createSession({ ttlMs: null, requiresApproval: false });
+  const enrollRes = new Response();
+  await handler(request("POST", "/temporary-powershell/v1/enroll", {
+    joinCode: created.joinCode,
+    client: { computerName: "PC" },
+  }), enrollRes);
+  assert.equal(enrollRes.statusCode, 200);
+  assert.equal(enrollRes.json().expiresAt, null);
+  assert.equal(enrollRes.json().requiresApproval, false);
 });
 
 test("returns an empty successful response while no command is queued", async (t) => {

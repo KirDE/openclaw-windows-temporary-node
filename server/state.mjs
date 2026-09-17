@@ -5,6 +5,7 @@ import path from "node:path";
 
 const SESSION_ID_PATTERN = /^[a-f0-9]{24}$/u;
 const COMMAND_ID_PATTERN = /^[a-f0-9]{24}$/u;
+const DEFAULT_JOIN_TTL_MS = 30 * 60_000;
 
 function now() {
   return Date.now();
@@ -70,7 +71,9 @@ export class RelayStore {
       if (!SESSION_ID_PATTERN.test(name)) continue;
       try {
         const session = await this.readSession(name);
-        if (session.expiresAt <= now() || session.revokedAt) await this.destroySession(session);
+        const sessionExpired = session.expiresAt !== null && session.expiresAt <= now();
+        const abandonedJoinExpired = !session.enrolledAt && session.joinExpiresAt <= now();
+        if (sessionExpired || abandonedJoinExpired || session.revokedAt) await this.destroySession(session);
       } catch (error) {
         if (error?.code !== "ENOENT") throw error;
       }
@@ -92,13 +95,21 @@ export class RelayStore {
 
   assertActive(session) {
     if (session.revokedAt) throw new Error("Session revoked");
-    if (session.expiresAt <= now()) throw new Error("Session expired");
+    if (session.expiresAt !== null && session.expiresAt <= now()) throw new Error("Session expired");
   }
 
-  async createSession({ ttlMs = 30 * 60_000, commandTimeoutSeconds = 120 } = {}) {
+  async createSession({
+    ttlMs = 30 * 60_000,
+    joinTtlMs = DEFAULT_JOIN_TTL_MS,
+    commandTimeoutSeconds = 120,
+    requiresApproval = true,
+  } = {}) {
     await this.init();
-    if (!Number.isInteger(ttlMs) || ttlMs < 60_000 || ttlMs > 8 * 60 * 60_000) {
+    if (ttlMs !== null && (!Number.isInteger(ttlMs) || ttlMs < 60_000 || ttlMs > 8 * 60 * 60_000)) {
       throw new Error("TTL must be between 1 minute and 8 hours");
+    }
+    if (!Number.isInteger(joinTtlMs) || joinTtlMs < 60_000 || joinTtlMs > 60 * 60_000) {
+      throw new Error("Join TTL must be between 1 and 60 minutes");
     }
     if (!Number.isInteger(commandTimeoutSeconds) || commandTimeoutSeconds < 5 || commandTimeoutSeconds > 900) {
       throw new Error("Command timeout must be between 5 and 900 seconds");
@@ -107,11 +118,15 @@ export class RelayStore {
     await this.pruneExpired();
     const joinCode = `${randomToken(8).slice(0, 8)}-${randomToken(8).slice(0, 8)}`.toUpperCase();
     const createdAt = now();
+    const expiresAt = ttlMs === null ? null : createdAt + ttlMs;
+    const joinExpiresAt = Math.min(createdAt + joinTtlMs, expiresAt ?? Number.POSITIVE_INFINITY);
     const session = {
       id,
       createdAt,
-      expiresAt: createdAt + ttlMs,
+      expiresAt,
+      joinExpiresAt,
       commandTimeoutSeconds,
+      requiresApproval: requiresApproval !== false,
       joinCodeHash: hash(joinCode),
       clientTokenHash: null,
       enrolledAt: null,
@@ -123,7 +138,7 @@ export class RelayStore {
     await mkdir(path.join(dir, "commands"), { recursive: true, mode: 0o700 });
     await mkdir(path.join(dir, "results"), { recursive: true, mode: 0o700 });
     await this.writeSession(session);
-    await atomicJson(path.join(this.root, "join", `${session.joinCodeHash}.json`), { sessionId: id, expiresAt: session.expiresAt });
+    await atomicJson(path.join(this.root, "join", `${session.joinCodeHash}.json`), { sessionId: id, expiresAt: session.joinExpiresAt });
     return { session, joinCode };
   }
 
@@ -142,6 +157,10 @@ export class RelayStore {
     try {
       const lookup = await readJson(consumedPath);
       const session = await this.readSession(lookup.sessionId);
+      if (lookup.expiresAt <= now()) {
+        await this.destroySession(session);
+        throw new Error("Join code is invalid, expired, or already used");
+      }
       this.assertActive(session);
       if (!safeEqualHex(session.joinCodeHash, codeHash) || session.enrolledAt) {
         throw new Error("Join code is invalid, expired, or already used");

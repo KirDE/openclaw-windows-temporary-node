@@ -1,9 +1,9 @@
 {
   "name": "@kirde/temporary-powershell-relay",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Zero-install, approval-gated temporary PowerShell support through an OpenClaw Gateway plugin.",
+  "description": "Zero-install PowerShell support through an OpenClaw Gateway plugin with bounded and trusted-session modes.",
   "scripts": {
     "test": "node --test"
   },
