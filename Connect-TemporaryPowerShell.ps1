@@ -102,12 +102,18 @@ try {
             Start-Sleep -Seconds $pollSeconds
             continue
         }
-        if ($null -eq $command -or -not $command.id) {
+        $commandIdProperty = if ($null -ne $command) {
+            $command.PSObject.Properties['id']
+        }
+        else {
+            $null
+        }
+        if ($null -eq $commandIdProperty -or [string]::IsNullOrWhiteSpace([string]$commandIdProperty.Value)) {
             Start-Sleep -Seconds $pollSeconds
             continue
         }
 
-        $commandId = [string]$command.id
+        $commandId = [string]$commandIdProperty.Value
         if ($resultCache.ContainsKey($commandId)) {
             Invoke-RelayJson -Method POST -Uri "$base/v1/results?session=$sessionId" -Headers $headers -Body $resultCache[$commandId] | Out-Null
             $resultCache.Remove($commandId)
